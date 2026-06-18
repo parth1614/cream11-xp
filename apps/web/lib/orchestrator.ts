@@ -1,11 +1,13 @@
 import type { SkillDoc } from "./skills";
 import { getPlatformConfig } from "./platforms";
+import type { TeamMemoryDoc } from "./team-memory";
 
 export type OrchestrationRequest = {
   key?: string;
   model?: string;
   query: string;
   platformId: string;
+  teamNames?: string[];
 };
 
 export type OrchestrationResponse = {
@@ -63,13 +65,25 @@ const ORCHESTRATION_RESPONSE_SCHEMA = {
   },
 } as const;
 
-function buildSystemPrompt(skills: SkillDoc[], platformId: string) {
+function buildSystemPrompt(
+  skills: SkillDoc[],
+  platformId: string,
+  teamMemoryDocs: TeamMemoryDoc[],
+) {
   const skillBlocks = skills
     .map(
       (skill) =>
         `## ${skill.name}\nDescription: ${skill.description}\n${skill.body}`,
     )
     .join("\n\n");
+  const teamMemoryBlock = teamMemoryDocs.length
+    ? [
+        "Relevant national-team memory files are loaded below. Treat them as durable context, refresh stale current-cycle facts when newer evidence is present, and do not invent historical details that are missing.",
+        ...teamMemoryDocs.map(
+          (doc) => `### Team memory: ${doc.teamName}\n${doc.body}`,
+        ),
+      ].join("\n\n")
+    : "No team-specific markdown memory files were loaded for this run.";
   const platform = getPlatformConfig(platformId);
 
   return [
@@ -86,6 +100,8 @@ function buildSystemPrompt(skills: SkillDoc[], platformId: string) {
     "Return output that matches the supplied JSON schema exactly.",
     "These markdown skill files describe the operating playbooks you should follow:",
     skillBlocks,
+    "Relevant team memory context:",
+    teamMemoryBlock,
   ].join("\n\n");
 }
 
@@ -162,6 +178,7 @@ function buildDemoResponse(
 export async function runOrchestration(
   request: OrchestrationRequest,
   skills: SkillDoc[],
+  teamMemoryDocs: TeamMemoryDoc[],
 ): Promise<OrchestrationResponse> {
   if (!request.key) {
     return buildDemoResponse(request.query, skills, request.platformId);
@@ -180,7 +197,7 @@ export async function runOrchestration(
       messages: [
         {
           role: "system",
-          content: buildSystemPrompt(skills, request.platformId),
+          content: buildSystemPrompt(skills, request.platformId, teamMemoryDocs),
         },
         {
           role: "user",

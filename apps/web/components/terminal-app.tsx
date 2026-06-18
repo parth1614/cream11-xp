@@ -475,6 +475,10 @@ export function TerminalApp() {
           model: model.trim(),
           platformId,
           query: contextualQuery,
+          teamNames:
+            activeMatch === null
+              ? []
+              : [activeMatch.homeSquadName, activeMatch.awaySquadName],
         }),
       });
 

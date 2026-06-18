@@ -82,6 +82,9 @@ flowchart TD
 apps/
   web/                  Next.js terminal app
 docs/                   Product, architecture, and stack notes
+memory/
+  teams/                National-team markdown memory for agents
+scripts/                Project generators and maintenance scripts
 skills/                 Runtime-agnostic agent playbooks
 README.md               Project front door
 ```
@@ -159,6 +162,7 @@ That boundary matters. The README is deliberately honest about it.
 - normalize fixtures, players, squads, and match status
 - preserve source and freshness
 - prepare match-aware terminal context
+- load relevant national-team memory files for the active matchup
 
 ### 3. Orchestration
 
@@ -193,6 +197,30 @@ Current playbooks:
 - [swarm-orchestrator](/Users/root-parth/Documents/cream11-xp/skills/swarm-orchestrator/SKILL.md)
 - [forecasting-desk](/Users/root-parth/Documents/cream11-xp/skills/forecasting-desk/SKILL.md)
 - [terminal-product-design](/Users/root-parth/Documents/cream11-xp/skills/terminal-product-design/SKILL.md)
+- [team-memory-governor](/Users/root-parth/Documents/cream11-xp/skills/team-memory-governor/SKILL.md)
+
+## Team Memory
+
+The repo now includes one markdown memory file per national team in [memory/teams](/Users/root-parth/Documents/cream11-xp/memory/teams/_index.md).
+
+What these files do:
+
+- give orchestrators reusable national-team context,
+- store current tournament snapshot data in a stable format,
+- preserve fantasy-relevant player leaders,
+- create a governed place for future historical notes and update logs.
+
+Important constraint:
+
+- active orchestrations only load the relevant teams for the current match instead of injecting the whole corpus.
+
+Bootstrap and refresh command:
+
+```bash
+node scripts/generate-team-memory.mjs
+```
+
+More detail lives in [docs/team-memory.md](/Users/root-parth/Documents/cream11-xp/docs/team-memory.md).
 
 ## App Tour
 
