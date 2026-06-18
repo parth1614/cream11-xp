@@ -152,6 +152,23 @@ function buildPlatformHeadline(platform: PlatformConfig, match: FifaMatchDetails
   return `${platform.label} terminal for ${match.homeSquadAbbr} vs ${match.awaySquadAbbr}.`;
 }
 
+function getDefaultExpandedDayKeys(days: FifaFixtureDay[]) {
+  if (!days.length) {
+    return [];
+  }
+
+  const today = new Date();
+  const todayKey = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
+
+  const expanded = days.filter((day) => day.dateKey >= todayKey).map((day) => day.dateKey);
+
+  return expanded.length ? expanded : [days[days.length - 1].dateKey];
+}
+
 export function TerminalApp() {
   const [platformId, setPlatformId] = useState<PlatformConfig["id"]>(getInitialPlatformId);
   const [query, setQuery] = useState(() => getPlatformConfig(getInitialPlatformId()).starterPrompts[0]);
@@ -176,6 +193,7 @@ export function TerminalApp() {
   const [lastRunLatencyMs, setLastRunLatencyMs] = useState<number | null>(null);
   const [activeStatId, setActiveStatId] = useState<StatCard["id"] | null>(null);
   const [fixtureDays, setFixtureDays] = useState<FifaFixtureDay[]>([]);
+  const [expandedDayKeys, setExpandedDayKeys] = useState<string[]>([]);
   const [fixturesError, setFixturesError] = useState("");
   const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
   const [activeMatch, setActiveMatch] = useState<FifaMatchDetails | null>(null);
@@ -216,7 +234,9 @@ export function TerminalApp() {
           throw new Error(payload.detail || payload.error || "Failed to load FIFA fixtures.");
         }
 
-        setFixtureDays(payload.days ?? []);
+        const nextDays = payload.days ?? [];
+        setFixtureDays(nextDays);
+        setExpandedDayKeys(getDefaultExpandedDayKeys(nextDays));
         setFixturesError("");
       })
       .catch((loadError: unknown) => {
@@ -413,6 +433,14 @@ export function TerminalApp() {
     setResponse(initialResponse);
   }
 
+  function toggleFixtureDay(dayKey: string) {
+    setExpandedDayKeys((current) =>
+      current.includes(dayKey)
+        ? current.filter((entry) => entry !== dayKey)
+        : [...current, dayKey],
+    );
+  }
+
   function runTerminal(nextQuery?: string) {
     const activeQuery = (nextQuery ?? query).trim();
 
@@ -504,69 +532,85 @@ export function TerminalApp() {
 
         <div className="workspace-grid">
           <section className="workspace-main">
-            <article className="brutal-panel">
-              <div className="terminal-shell-bar">
-                <span>01 / World Cup fixtures</span>
-                <span>
-                  {fixtureDays.reduce((sum, day) => sum + day.matches.length, 0)} live match
-                  terminals
-                </span>
-              </div>
-
-              <div className="brutal-panel__body">
-                <div className="terminal-note">
-                  Click any fixture first. That match becomes the shared context for all four
-                  terminals.
+            {!activeFixture ? (
+              <article className="brutal-panel">
+                <div className="terminal-shell-bar">
+                  <span>01 / Choose World Cup fixture</span>
+                  <span>
+                    {fixtureDays.reduce((sum, day) => sum + day.matches.length, 0)} live match
+                    terminals
+                  </span>
                 </div>
 
-                {fixturesError ? <p className="terminal-error">{fixturesError}</p> : null}
+                <div className="brutal-panel__body">
+                  <div className="terminal-note">
+                    Choose a match first. The terminal workspace opens only after fixture
+                    selection, so the user lands directly in the right market stack.
+                  </div>
 
-                <div className="fixture-board">
-                  {fixtureDays.map((day) => (
-                    <section key={day.dateKey} className="fixture-strip">
-                      <div className="fixture-strip__header">
-                        <span>{day.dateLabel}</span>
-                        <span>{day.matches.length} matches</span>
-                      </div>
+                  {fixturesError ? <p className="terminal-error">{fixturesError}</p> : null}
 
-                      <div className="fixture-strip__matches">
-                        {day.matches.map((match) => (
+                  <div className="fixture-board">
+                    {fixtureDays.map((day) => {
+                      const isExpanded = expandedDayKeys.includes(day.dateKey);
+
+                      return (
+                        <section key={day.dateKey} className="fixture-strip">
                           <button
-                            key={match.id}
                             type="button"
-                            className={`fixture-card ${selectedFixtureId === match.id ? "fixture-card--active" : ""}`}
-                            onClick={() => selectFixture(match)}
+                            className="fixture-strip__header fixture-strip__header--button"
+                            onClick={() => toggleFixtureDay(day.dateKey)}
+                            aria-expanded={isExpanded}
                           >
-                            <div className="fixture-card__meta">
-                              <span>{match.stage}</span>
-                              <span>{match.kickoffLabel}</span>
-                            </div>
-                            <div className="fixture-card__matchup">
-                              <strong>{match.homeSquadAbbr}</strong>
-                              <span>{match.homeSquadName}</span>
-                              <span className="fixture-card__versus">vs</span>
-                              <span>{match.awaySquadName}</span>
-                              <strong>{match.awaySquadAbbr}</strong>
-                            </div>
-                            <div className="fixture-card__score">
-                              <span>
-                                {match.homeScore ?? "-"} : {match.awayScore ?? "-"}
-                              </span>
-                              <span>{match.venueCity ?? match.venueName}</span>
-                            </div>
+                            <span>{day.dateLabel}</span>
+                            <span className="fixture-strip__meta">
+                              {day.matches.length} matches
+                              <strong aria-hidden="true">{isExpanded ? "▴" : "▾"}</strong>
+                            </span>
                           </button>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
+
+                          {isExpanded ? (
+                            <div className="fixture-strip__matches">
+                              {day.matches.map((match) => (
+                                <button
+                                  key={match.id}
+                                  type="button"
+                                  className={`fixture-card ${selectedFixtureId === match.id ? "fixture-card--active" : ""}`}
+                                  onClick={() => selectFixture(match)}
+                                >
+                                  <div className="fixture-card__meta">
+                                    <span>{match.stage}</span>
+                                    <span>{match.kickoffLabel}</span>
+                                  </div>
+                                  <div className="fixture-card__matchup">
+                                    <strong>{match.homeSquadAbbr}</strong>
+                                    <span>{match.homeSquadName}</span>
+                                    <span className="fixture-card__versus">vs</span>
+                                    <span>{match.awaySquadName}</span>
+                                    <strong>{match.awaySquadAbbr}</strong>
+                                  </div>
+                                  <div className="fixture-card__score">
+                                    <span>
+                                      {match.homeScore ?? "-"} : {match.awayScore ?? "-"}
+                                    </span>
+                                    <span>{match.venueCity ?? match.venueName}</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </section>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </article>
+              </article>
+            ) : null}
 
             {activeFixture ? (
               <article className="brutal-panel">
                 <div className="terminal-shell-bar">
-                  <span>02 / Match workspace</span>
+                  <span>01 / Match workspace</span>
                   <button type="button" className="shell-link" onClick={clearMatchSelection}>
                     Back to fixture board
                   </button>
@@ -608,7 +652,7 @@ export function TerminalApp() {
             {activeFixture ? (
               <article className="brutal-panel">
                 <div className="terminal-shell-bar">
-                  <span>03 / {platform.label} terminal</span>
+                  <span>02 / {platform.label} terminal</span>
                   <span>{isPending ? "Running orchestration" : "Ready"}</span>
                 </div>
 
@@ -683,7 +727,7 @@ export function TerminalApp() {
             {activeFixture ? (
               <article className="brutal-panel">
                 <div className="terminal-shell-bar">
-                  <span>04 / Terminal output</span>
+                  <span>03 / Terminal output</span>
                   <span>{response.mode === "openrouter" ? response.model : "demo/local-fallback"}</span>
                 </div>
 
@@ -780,8 +824,8 @@ export function TerminalApp() {
 
             <article className="brutal-panel">
               <div className="terminal-shell-bar">
-                <span>Active match feed</span>
-                <span>{activeMatch ? "Loaded" : "Waiting"}</span>
+                <span>{activeMatch ? "Active match feed" : "Selection guide"}</span>
+                <span>{activeMatch ? "Loaded" : "Choose first"}</span>
               </div>
 
               <div className="brutal-panel__body terminal-stack-list">

@@ -75,18 +75,22 @@ textarea {
   gap: 16px;
   grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.8fr);
   margin-top: 16px;
+  align-items: start;
 }
 
 .workspace-main,
 .workspace-side {
   display: grid;
   gap: 16px;
+  align-content: start;
+  align-self: start;
 }
 
 .brutal-panel {
   border: 3px solid var(--line);
   background: var(--panel);
   box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--line);
+  align-self: start;
 }
 
 .brutal-panel--hero {
@@ -256,6 +260,34 @@ textarea {
   font-size: 0.72rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.fixture-strip__header--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fixture-strip__header--button:hover {
+  background: var(--panel-2);
+}
+
+.fixture-strip__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fixture-strip__meta strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 4px 8px;
+  border: 2px solid var(--line);
+  background: var(--accent);
 }
 
 .fixture-strip__matches {
