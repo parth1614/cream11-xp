@@ -577,6 +577,13 @@ select.terminal-input {
   line-height: 1.7;
 }
 
+.output-marquee__meta {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
 .output-grid {
   display: grid;
   gap: 12px;
@@ -691,7 +698,8 @@ select.terminal-input {
   }
 
   .output-grid,
-  .terminal-selector {
+  .terminal-selector,
+  .output-marquee__meta {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -711,7 +719,8 @@ select.terminal-input {
 
   .hero-stats,
   .output-grid,
-  .terminal-selector {
+  .terminal-selector,
+  .output-marquee__meta {
     grid-template-columns: 1fr;
   }
 

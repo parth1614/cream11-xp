@@ -121,6 +121,23 @@ export type FifaMatchPlayer = {
   oneToWatch: boolean;
 };
 
+export type FifaTeamSnapshot = {
+  squadId: number;
+  teamName: string;
+  teamAbbr: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  recentResults: string[];
+  keyPlayerSummary: string[];
+  avgTopForm: number;
+  avgTopPoints: number;
+};
+
 export type FifaMatchDetails = {
   id: number;
   roundId: number;
@@ -141,6 +158,8 @@ export type FifaMatchDetails = {
   awaySquadAbbr: string;
   homeScore: number | null;
   awayScore: number | null;
+  homeSnapshot: FifaTeamSnapshot;
+  awaySnapshot: FifaTeamSnapshot;
   homeTopPlayers: FifaMatchPlayer[];
   awayTopPlayers: FifaMatchPlayer[];
   scorerSummary: string[];
@@ -200,6 +219,109 @@ function mapMatchPlayer(player: FifaFantasyPlayer): FifaMatchPlayer {
     lastRoundPoints: player.stats.lastRoundPoints,
     nextFixtureFromScheduledRound: player.stats.nextFixtureFromScheduledRound,
     oneToWatch: player.oneToWatch,
+  };
+}
+
+function formatRecentResult(
+  match: FifaFantasyTournament,
+  squadId: number,
+  teamName: string,
+) {
+  const isHome = match.homeSquadId === squadId;
+  const opponent = isHome ? match.awaySquadName : match.homeSquadName;
+  const goalsFor = isHome ? match.homeScore : match.awayScore;
+  const goalsAgainst = isHome ? match.awayScore : match.homeScore;
+
+  return `${teamName} ${goalsFor ?? "-"}-${goalsAgainst ?? "-"} ${opponent} (${match.status})`;
+}
+
+function buildTeamSnapshot(
+  snapshot: FifaDataSnapshot,
+  squadId: number,
+  teamName: string,
+  teamAbbr: string,
+) {
+  const teamMatches = snapshot.rounds
+    .flatMap((round) => round.tournaments)
+    .filter((match) => match.homeSquadId === squadId || match.awaySquadId === squadId)
+    .sort((left, right) => left.date.localeCompare(right.date));
+
+  let played = 0;
+  let wins = 0;
+  let draws = 0;
+  let losses = 0;
+  let goalsFor = 0;
+  let goalsAgainst = 0;
+
+  for (const match of teamMatches) {
+    if (match.status !== "complete") {
+      continue;
+    }
+
+    const isHome = match.homeSquadId === squadId;
+    const scored = isHome ? match.homeScore : match.awayScore;
+    const conceded = isHome ? match.awayScore : match.homeScore;
+
+    if (scored == null || conceded == null) {
+      continue;
+    }
+
+    played += 1;
+    goalsFor += scored;
+    goalsAgainst += conceded;
+
+    if (scored > conceded) {
+      wins += 1;
+    } else if (scored === conceded) {
+      draws += 1;
+    } else {
+      losses += 1;
+    }
+  }
+
+  const topPlayers = (snapshot.playersBySquadId.get(squadId) ?? []).slice(0, 5);
+  const keyPlayerSummary = topPlayers.map((player) => {
+    return `${playerDisplayName(player)} | ${player.position} | ${player.stats.totalPoints} pts | form ${player.stats.form} | selected ${player.percentSelected}%`;
+  });
+
+  const avgTopForm =
+    topPlayers.length > 0
+      ? Number(
+          (
+            topPlayers.reduce((sum, player) => sum + player.stats.form, 0) / topPlayers.length
+          ).toFixed(1),
+        )
+      : 0;
+
+  const avgTopPoints =
+    topPlayers.length > 0
+      ? Number(
+          (
+            topPlayers.reduce((sum, player) => sum + player.stats.totalPoints, 0) /
+            topPlayers.length
+          ).toFixed(1),
+        )
+      : 0;
+
+  return {
+    squadId,
+    teamName,
+    teamAbbr,
+    played,
+    wins,
+    draws,
+    losses,
+    goalsFor,
+    goalsAgainst,
+    goalDifference: goalsFor - goalsAgainst,
+    recentResults: teamMatches
+      .filter((match) => match.status === "complete")
+      .slice(-3)
+      .reverse()
+      .map((match) => formatRecentResult(match, squadId, teamName)),
+    keyPlayerSummary,
+    avgTopForm,
+    avgTopPoints,
   };
 }
 
@@ -341,6 +463,18 @@ export async function getFifaMatchDetails(matchId: number): Promise<FifaMatchDet
     const awayTopPlayers = (snapshot.playersBySquadId.get(match.awaySquadId) ?? [])
       .slice(0, 8)
       .map(mapMatchPlayer);
+    const homeSnapshot = buildTeamSnapshot(
+      snapshot,
+      match.homeSquadId,
+      match.homeSquadName,
+      match.homeSquadAbbr,
+    );
+    const awaySnapshot = buildTeamSnapshot(
+      snapshot,
+      match.awaySquadId,
+      match.awaySquadName,
+      match.awaySquadAbbr,
+    );
 
     return {
       id: match.id,
@@ -362,6 +496,8 @@ export async function getFifaMatchDetails(matchId: number): Promise<FifaMatchDet
       awaySquadAbbr: match.awaySquadAbbr,
       homeScore: match.homeScore,
       awayScore: match.awayScore,
+      homeSnapshot,
+      awaySnapshot,
       homeTopPlayers,
       awayTopPlayers,
       scorerSummary: [

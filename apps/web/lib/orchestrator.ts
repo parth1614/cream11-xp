@@ -8,6 +8,8 @@ export type OrchestrationRequest = {
   query: string;
   platformId: string;
   teamNames?: string[];
+  currentDateIso?: string;
+  evidenceScore?: number;
 };
 
 export type OrchestrationResponse = {
@@ -15,6 +17,8 @@ export type OrchestrationResponse = {
   model: string;
   headline: string;
   summary: string;
+  primaryCall: string;
+  confidence: number;
   recommendation: string[];
   risks: string[];
   nextChecks: string[];
@@ -38,37 +42,168 @@ const ORCHESTRATION_RESPONSE_SCHEMA = {
         type: "string",
         description: "A short, direct explanation of the current terminal conclusion.",
       },
+      primaryCall: {
+        type: "string",
+        description:
+          "One explicit action-oriented call. It should sound like a decision, not a topic label.",
+      },
+      confidence: {
+        type: "integer",
+        minimum: 0,
+        maximum: 100,
+        description:
+          "Confidence score from 0 to 100 for the primary call, based only on the supplied evidence.",
+      },
       recommendation: {
         type: "array",
-        description: "Primary actions or recommendations for the user.",
+        description:
+          "Exactly 3 concrete recommendations. Use them for the best angle, the best supporting angle, and the best avoid-or-pivot angle.",
+        minItems: 3,
+        maxItems: 3,
         items: {
           type: "string",
         },
       },
       risks: {
         type: "array",
-        description: "The main reasons this recommendation could fail or stay unresolved.",
+        description:
+          "Exactly 3 concrete failure modes for the primary call. No vague macro filler.",
+        minItems: 3,
+        maxItems: 3,
         items: {
           type: "string",
         },
       },
       nextChecks: {
         type: "array",
-        description: "Concrete next checks the swarm should run or refresh.",
+        description:
+          "Exactly 3 refresh checks that could materially change the primary call.",
+        minItems: 3,
+        maxItems: 3,
         items: {
           type: "string",
         },
       },
     },
-    required: ["headline", "summary", "recommendation", "risks", "nextChecks"],
+    required: [
+      "headline",
+      "summary",
+      "primaryCall",
+      "confidence",
+      "recommendation",
+      "risks",
+      "nextChecks",
+    ],
     additionalProperties: false,
   },
 } as const;
+
+function buildPlatformDecisionRules(platformId: string) {
+  switch (platformId) {
+    case "fifa":
+      return [
+        "For FIFA Fantasy, recommendations must name players or roster actions whenever the supplied context supports it.",
+        "The primary call should usually be a captain, core-stack, fade, or roster-construction stance.",
+        "Do not say 'monitor' or 'prepare' as the main recommendation. Commit to a build direction first.",
+      ].join("\n");
+    case "kalshi":
+      return [
+        "For Kalshi, the primary call must be one of: take YES lean, take NO lean, wait/no-trade.",
+        "If there is not enough evidence for a trade, say no-trade explicitly instead of inventing edge.",
+        "Do not describe the market as 'complex' without converting that into a tradable or no-trade stance.",
+      ].join("\n");
+    case "polymarket":
+      return [
+        "For Polymarket, the primary call must be one of: buy, avoid, wait for repricing, or no-trade.",
+        "Tie every recommendation to a concrete event angle, player angle, or market-pricing angle.",
+        "Do not output broad narrative commentary without a clear trading stance.",
+      ].join("\n");
+    case "stake":
+      return [
+        "For Stake-style betting, the primary call must be one of: back side A, back side B, back totals angle, back player angle, or pass.",
+        "Use explicit bet framing instead of general match commentary.",
+        "If the evidence is thin, return pass/no-bet clearly.",
+      ].join("\n");
+    default:
+      return "Return a concrete decision instead of a vague analytical summary.";
+  }
+}
+
+function monthNameToIndex(month: string) {
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+
+  return months.indexOf(month.toLowerCase());
+}
+
+function containsPastDateReference(text: string, currentDate: Date) {
+  const patterns = [
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/gi,
+    /\b(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const monthToken = typeof match[1] === "string" && isNaN(Number(match[1])) ? match[1] : match[2];
+      const dayToken = typeof match[1] === "string" && isNaN(Number(match[1])) ? match[2] : match[1];
+      const monthIndex = monthNameToIndex(monthToken);
+      const day = Number(dayToken);
+
+      if (monthIndex < 0 || !Number.isFinite(day)) {
+        continue;
+      }
+
+      const referenced = new Date(Date.UTC(currentDate.getUTCFullYear(), monthIndex, day));
+
+      if (referenced.getTime() < Date.UTC(
+        currentDate.getUTCFullYear(),
+        currentDate.getUTCMonth(),
+        currentDate.getUTCDate(),
+      )) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function normalizeChecklist(
+  items: string[],
+  currentDate: Date,
+  fallbacks: string[],
+) {
+  const cleaned = items.filter((item) => !containsPastDateReference(item, currentDate)).slice(0, 3);
+
+  for (const fallback of fallbacks) {
+    if (cleaned.length >= 3) {
+      break;
+    }
+
+    cleaned.push(fallback);
+  }
+
+  return cleaned.slice(0, 3);
+}
 
 function buildSystemPrompt(
   skills: SkillDoc[],
   platformId: string,
   teamMemoryDocs: TeamMemoryDoc[],
+  currentDateIso: string,
+  evidenceScore: number,
 ) {
   const skillBlocks = skills
     .map(
@@ -89,14 +224,26 @@ function buildSystemPrompt(
   return [
     "You are Cream11 XP, a football intelligence orchestration layer.",
     "Act like a serious operator inside a sports decision terminal.",
-    "Be specific, compact, and evidence-aware.",
+    "Be specific, compact, evidence-aware, and decisional.",
     "Do not use hype language or generic AI phrasing.",
+    `Current UTC date/time: ${currentDateIso}.`,
+    "Treat this as the authoritative current time for the run.",
+    `Evidence density score for this run: ${evidenceScore}/100.`,
     `The active terminal is ${platform.label}.`,
     `Platform descriptor: ${platform.descriptor}.`,
     `Relevant market types: ${platform.marketTypes.join(", ")}.`,
     `Relevant prediction lanes: ${platform.predictionLanes.join(", ")}.`,
     "If the user asks broad product questions, answer in product/operator terms.",
-    "If the user asks for predictions or fantasy guidance, be explicit about uncertainty and what information is missing.",
+    "If the user asks for predictions or fantasy guidance, be explicit about uncertainty and what information is missing, but still make the strongest evidence-backed call available.",
+    "Only use facts that are present in the supplied match context, skill docs, or loaded team memory. Do not invent weather, historical resilience, tactical flexibility, market prices, or hidden lineup news if they were not provided.",
+    "Never use placeholder text from team memory as real evidence.",
+    "Never tell the user to wait for, monitor, or evaluate an event whose date is already in the past relative to the current run time.",
+    "If loaded team memory contains future-fixture notes that are now in the past, treat them as stale and ignore them.",
+    "Calibrate confidence to the evidence density. Rich, aligned official data should generally produce medium-high confidence unless the signals clearly conflict.",
+    "Do not stay stuck in the 50s or 60s if the evidence packet is strong and the primary call is explicit.",
+    "Bad output examples: 'complexity analysis', 'monitor this', 'prepare for volatility', 'high-variance clash', 'keep an eye on'.",
+    "Good output style: one primary call, one confidence score, three sharp recommendations, three real failure modes, three concrete flip checks.",
+    buildPlatformDecisionRules(platformId),
     "Return output that matches the supplied JSON schema exactly.",
     "These markdown skill files describe the operating playbooks you should follow:",
     skillBlocks,
@@ -115,6 +262,8 @@ function parseModelOutput(payload: string) {
   const parsed = JSON.parse(cleaned) as {
     headline?: string;
     summary?: string;
+    primaryCall?: string;
+    confidence?: number;
     recommendation?: string[];
     risks?: string[];
     nextChecks?: string[];
@@ -137,6 +286,12 @@ function parseModelOutput(payload: string) {
       typeof parsed.summary === "string"
         ? parsed.summary
         : "The orchestration layer produced a response, but the summary field was empty.",
+    primaryCall:
+      typeof parsed.primaryCall === "string" ? parsed.primaryCall : "No explicit call returned.",
+    confidence:
+      typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(100, Math.round(parsed.confidence)))
+        : 50,
     recommendation,
     risks,
     nextChecks,
@@ -156,10 +311,12 @@ function buildDemoResponse(
     headline: `${platform.label} terminal demo run`,
     summary:
       `No OpenRouter key was supplied, so the ${platform.label} terminal returned a local fallback response shaped by the repo's skill playbooks.`,
+    primaryCall: "No live model call yet. Add an OpenRouter key before trusting the terminal.",
+    confidence: 15,
     recommendation: [
-      `Treat "${query}" as the active ${platform.label} decision lane and break it into research, projection, and risk passes.`,
-      "Start with official squad, lineup, and fixture sources before bringing in market or community signal.",
-      "Return one primary recommendation and at least one lower-confidence alternative with an explicit invalidation trigger.",
+      `Primary lane: treat "${query}" as the active ${platform.label} decision and force one explicit call.`,
+      "Use the active match context first, then support or reject the call with player and fixture evidence.",
+      "If evidence is thin, return pass/no-trade instead of pretending there is edge.",
     ],
     risks: [
       "This response is local scaffolding, not a model-backed analysis.",
@@ -180,6 +337,12 @@ export async function runOrchestration(
   skills: SkillDoc[],
   teamMemoryDocs: TeamMemoryDoc[],
 ): Promise<OrchestrationResponse> {
+  const currentDateIso = request.currentDateIso ?? new Date().toISOString();
+  const evidenceScore =
+    typeof request.evidenceScore === "number" && Number.isFinite(request.evidenceScore)
+      ? Math.max(0, Math.min(100, Math.round(request.evidenceScore)))
+      : 50;
+
   if (!request.key) {
     return buildDemoResponse(request.query, skills, request.platformId);
   }
@@ -197,7 +360,13 @@ export async function runOrchestration(
       messages: [
         {
           role: "system",
-          content: buildSystemPrompt(skills, request.platformId, teamMemoryDocs),
+          content: buildSystemPrompt(
+            skills,
+            request.platformId,
+            teamMemoryDocs,
+            currentDateIso,
+            evidenceScore,
+          ),
         },
         {
           role: "user",
@@ -207,6 +376,7 @@ export async function runOrchestration(
       provider: {
         require_parameters: true,
       },
+      temperature: 0.2,
       response_format: {
         type: "json_schema",
         json_schema: ORCHESTRATION_RESPONSE_SCHEMA,
@@ -222,6 +392,8 @@ export async function runOrchestration(
       headline: "OpenRouter request failed",
       summary:
         "The terminal fell back to demo mode because the OpenRouter request did not succeed.",
+      primaryCall: "No live call available because the OpenRouter request failed.",
+      confidence: 0,
       risks: [
         `HTTP ${response.status}: ${failureText.slice(0, 180)}`,
         "The provided model slug or API key may be invalid.",
@@ -247,6 +419,8 @@ export async function runOrchestration(
       headline: "Empty model response",
       summary:
         "OpenRouter returned successfully, but there was no usable message content to render.",
+      primaryCall: "No explicit call available because the model returned empty content.",
+      confidence: 0,
       risks: [
         "The upstream model did not return a standard chat-completions payload.",
         "The prompt may need a stricter output contract.",
@@ -255,15 +429,34 @@ export async function runOrchestration(
   }
 
   const parsed = parseModelOutput(content);
+  const currentDate = new Date(currentDateIso);
+  const fallbackChecks = [
+    "Recheck confirmed lineups and role changes 45 to 60 minutes before kickoff.",
+    "Refresh the latest injury, suspension, and starter status for both teams.",
+    "Re-run the call if any major player or market assumption changes before kickoff.",
+  ];
+  const fallbackRecommendations = [
+    "Anchor the decision in the current match context instead of stale prior-fixture references.",
+    "Prefer explicit player, side, or no-trade calls over soft narrative commentary.",
+    "Downgrade confidence immediately if the live lineup or role assumptions break.",
+  ];
+  const minConfidenceFromEvidence =
+    evidenceScore >= 85 ? 78 : evidenceScore >= 75 ? 72 : evidenceScore >= 65 ? 66 : 0;
+  const normalizedConfidence =
+    /no-trade|pass|avoid|wait/i.test(parsed.primaryCall) && parsed.confidence < minConfidenceFromEvidence
+      ? parsed.confidence
+      : Math.max(parsed.confidence, minConfidenceFromEvidence);
 
   return {
     mode: "openrouter",
     model: payload.model ?? request.model ?? DEFAULT_MODEL,
     headline: parsed.headline,
     summary: parsed.summary,
-    recommendation: parsed.recommendation,
+    primaryCall: parsed.primaryCall,
+    confidence: normalizedConfidence,
+    recommendation: normalizeChecklist(parsed.recommendation, currentDate, fallbackRecommendations),
     risks: parsed.risks,
-    nextChecks: parsed.nextChecks,
+    nextChecks: normalizeChecklist(parsed.nextChecks, currentDate, fallbackChecks),
     loadedSkills: skills.map((skill) => skill.slug),
     raw: content,
   };

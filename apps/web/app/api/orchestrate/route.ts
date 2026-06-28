@@ -13,6 +13,7 @@ export async function POST(request: Request) {
       platformId?: string;
       query?: string;
       teamNames?: string[];
+      evidenceScore?: number;
     };
 
     if (!body.query?.trim()) {
@@ -31,6 +32,8 @@ export async function POST(request: Request) {
         platformId: body.platformId?.trim() || "fifa",
         query: body.query.trim(),
         teamNames: body.teamNames ?? [],
+        currentDateIso: new Date().toISOString(),
+        evidenceScore: body.evidenceScore,
       },
       skills,
       teamMemoryDocs,

@@ -37,6 +37,8 @@ const initialResponse: TerminalResponse = {
   headline: "Terminal awaiting first run",
   summary:
     "Select a World Cup fixture first, then route the same match context through the terminal you want to test.",
+  primaryCall: "No call yet. Select a fixture and run the terminal.",
+  confidence: 0,
   recommendation: [
     "Start from one concrete fixture instead of a broad slate-level question.",
     "Switch between the four terminals to see how the same match maps to fantasy, bets, and prediction markets.",
@@ -92,6 +94,35 @@ function formatPrice(price: string | null) {
 
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
+}
+
+function formatTeamSnapshotLine(snapshot: FifaMatchDetails["homeSnapshot"]) {
+  return [
+    `${snapshot.teamName} record ${snapshot.wins}-${snapshot.draws}-${snapshot.losses}`,
+    `goals ${snapshot.goalsFor}:${snapshot.goalsAgainst}`,
+    `GD ${snapshot.goalDifference >= 0 ? "+" : ""}${snapshot.goalDifference}`,
+    `avg top-player form ${snapshot.avgTopForm}`,
+    `avg top-player points ${snapshot.avgTopPoints}`,
+  ].join(" | ");
+}
+
+function computeEvidenceScore(match: FifaMatchDetails | null) {
+  if (!match) {
+    return 50;
+  }
+
+  let score = 45;
+
+  score += Math.min(match.homeSnapshot.played, 3) * 5;
+  score += Math.min(match.awaySnapshot.played, 3) * 5;
+  score += Math.min(match.homeSnapshot.keyPlayerSummary.length, 4) * 2;
+  score += Math.min(match.awaySnapshot.keyPlayerSummary.length, 4) * 2;
+  score += Math.min(match.statsCoverage.length, 4) * 3;
+  score += match.status === "scheduled" || match.status === "pre_match" ? 6 : 2;
+  score += match.homeSnapshot.avgTopForm > 0 ? 4 : 0;
+  score += match.awaySnapshot.avgTopForm > 0 ? 4 : 0;
+
+  return Math.min(100, score);
 }
 
 function buildMatchPrompt(platform: PlatformConfig, match: FifaMatchDetails) {
@@ -460,6 +491,13 @@ export function TerminalApp() {
             `Kickoff: ${activeMatch.kickoff}`,
             `Venue: ${activeMatch.venueName}${activeMatch.venueCity ? `, ${activeMatch.venueCity}` : ""}`,
             `Current score: ${activeMatch.homeScore ?? "-"}-${activeMatch.awayScore ?? "-"} (${activeMatch.homeSquadAbbr}/${activeMatch.awaySquadAbbr})`,
+            `Home snapshot: ${formatTeamSnapshotLine(activeMatch.homeSnapshot)}`,
+            `Away snapshot: ${formatTeamSnapshotLine(activeMatch.awaySnapshot)}`,
+            `Home recent results: ${activeMatch.homeSnapshot.recentResults.join(" || ") || "none"}`,
+            `Away recent results: ${activeMatch.awaySnapshot.recentResults.join(" || ") || "none"}`,
+            `Home key players: ${activeMatch.homeSnapshot.keyPlayerSummary.slice(0, 4).join(" || ") || "none"}`,
+            `Away key players: ${activeMatch.awaySnapshot.keyPlayerSummary.slice(0, 4).join(" || ") || "none"}`,
+            `Data coverage: ${activeMatch.statsCoverage.join(" || ")}`,
             `Prompt: ${activeQuery}`,
           ].join("\n");
 
@@ -475,6 +513,7 @@ export function TerminalApp() {
           model: model.trim(),
           platformId,
           query: contextualQuery,
+          evidenceScore: computeEvidenceScore(activeMatch),
           teamNames:
             activeMatch === null
               ? []
@@ -740,6 +779,16 @@ export function TerminalApp() {
                     <div className="output-marquee__label">Headline</div>
                     <h2>{response.headline}</h2>
                     <p>{response.summary}</p>
+                    <div className="output-marquee__meta">
+                      <div className="registry-card">
+                        <strong>Primary call</strong>
+                        <span>{response.primaryCall}</span>
+                      </div>
+                      <div className="registry-card">
+                        <strong>Confidence</strong>
+                        <span>{response.confidence}%</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="output-grid">

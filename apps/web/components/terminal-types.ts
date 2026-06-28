@@ -3,6 +3,8 @@ export type TerminalResponse = {
   model: string;
   headline: string;
   summary: string;
+  primaryCall: string;
+  confidence: number;
   recommendation: string[];
   risks: string[];
   nextChecks: string[];
